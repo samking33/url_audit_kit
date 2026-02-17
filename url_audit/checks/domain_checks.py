@@ -77,16 +77,25 @@ def _rdap_fetch(domain: str) -> Optional[dict]:
 
 def check_domain_legitimacy(url: str) -> CheckResult:
     # (1) Lookalike heuristic
-    _, host, ext = domain_parts(url)
-    suspicious = bool(re.search(r"(paypa1|faceb00k|g00gle|micr0soft|appleid|supp0rt)", host or "", re.I))
-    return CheckResult(1, "Domain Name Legitimacy", "WARN" if suspicious else "PASS", evidence=f"host={host}")
+    try:
+        _, host, ext = domain_parts(url)
+        if not host:
+            return CheckResult(1, "Domain Name Legitimacy", "WARN", evidence="Could not extract hostname")
+        suspicious = bool(re.search(r"(paypa1|faceb00k|g00gle|micr0soft|appleid|supp0rt|amaz0n|netfl1x)", host or "", re.I))
+        return CheckResult(1, "Domain Name Legitimacy", "WARN" if suspicious else "PASS", evidence=f"host={host}")
+    except Exception as e:
+        return CheckResult(1, "Domain Name Legitimacy", "WARN", evidence=f"Error: {str(e)[:100]}")
 
 def check_tld(url: str) -> CheckResult:
     # (2) High-risk TLD heuristic
-    _, host, ext = domain_parts(url)
-    risky = {"xyz","top","tk","gq","cf","ml"}
-    status = "WARN" if ext.suffix in risky else "PASS"
-    return CheckResult(2, "Top-Level Domain (TLD)", status, evidence=f"tld={ext.suffix}")
+    try:
+        _, host, ext = domain_parts(url)
+        risky = {"xyz","top","tk","gq","cf","ml","ga","pw","cc"}
+        tld = ext.suffix or "unknown"
+        status = "WARN" if tld in risky else "PASS"
+        return CheckResult(2, "Top-Level Domain (TLD)", status, evidence=f"tld={tld}")
+    except Exception as e:
+        return CheckResult(2, "Top-Level Domain (TLD)", "WARN", evidence=f"Error: {str(e)[:100]}")
 
 def check_whois_age(url: str) -> CheckResult:
     # (3) WHOIS age with RDAP fallback (handles .edu and others)
@@ -111,14 +120,16 @@ def check_whois_age(url: str) -> CheckResult:
 
     try:
         from datetime import datetime, timezone
+        if not isinstance(cd, datetime):
+            return CheckResult(3, "WHOIS and Domain Age", "WARN", evidence="Invalid creation_date format")
         if not getattr(cd, "tzinfo", None):
             # assume UTC if naive
             cd = cd.replace(tzinfo=timezone.utc)
         age_days = (datetime.now(timezone.utc) - cd).days
         status = "PASS" if age_days >= 90 else "WARN"
         return CheckResult(3, "WHOIS and Domain Age", status, evidence=f"age_days={age_days}")
-    except Exception:
-        return CheckResult(3, "WHOIS and Domain Age", "WARN", evidence="Could not parse creation_date")
+    except Exception as e:
+        return CheckResult(3, "WHOIS and Domain Age", "WARN", evidence=f"Parse error: {str(e)[:100]}")
 
 def _has_dmarc(domain: str) -> bool:
     """
@@ -162,36 +173,41 @@ def check_dns_email_records(url: str) -> List[CheckResult]:
 
 def check_registrar_transparency(url: str) -> CheckResult:
     # (5) Registrar details from WHOIS with RDAP fallback (.edu-friendly)
-    _, host, ext = domain_parts(url)
-    domain = ".".join([p for p in [ext.domain, ext.suffix] if p])
-    w = whois_lookup(domain)
-    registrar = getattr(w, "registrar", None)
+    try:
+        _, host, ext = domain_parts(url)
+        domain = ".".join([p for p in [ext.domain, ext.suffix] if p])
+        if not domain:
+            return CheckResult(5, "Registrar Details Transparency", "WARN", evidence="Could not extract domain")
+        w = whois_lookup(domain)
+        registrar = getattr(w, "registrar", None)
 
-    if not registrar:
-        rdap = _rdap_fetch(domain) or {}
-        try:
-            # Prefer entities with role=registrar
-            ents = (rdap.get("entities") or [])
-            for e in ents:
-                roles = [r.lower() for r in (e.get("roles") or [])]
-                if "registrar" in roles:
-                    v = e.get("vcardArray", [])
-                    if isinstance(v, list) and len(v) >= 2 and isinstance(v[1], list):
-                        for item in v[1]:
-                            if item and item[0] in ("fn", "org"):
-                                registrar = item[-1]
-                                if registrar:
-                                    break
-                if registrar:
-                    break
-            # Fallback: some RDAPs include "port43" or custom registrarName fields
-            if not registrar:
-                registrar = rdap.get("port43") or rdap.get("registrarName")
-        except Exception:
-            pass
+        if not registrar:
+            rdap = _rdap_fetch(domain) or {}
+            try:
+                # Prefer entities with role=registrar
+                ents = (rdap.get("entities") or [])
+                for e in ents:
+                    roles = [r.lower() for r in (e.get("roles") or [])]
+                    if "registrar" in roles:
+                        v = e.get("vcardArray", [])
+                        if isinstance(v, list) and len(v) >= 2 and isinstance(v[1], list):
+                            for item in v[1]:
+                                if item and item[0] in ("fn", "org"):
+                                    registrar = item[-1]
+                                    if registrar:
+                                        break
+                    if registrar:
+                        break
+                # Fallback: some RDAPs include "port43" or custom registrarName fields
+                if not registrar:
+                    registrar = rdap.get("port43") or rdap.get("registrarName")
+            except Exception:
+                pass
 
-    status = "PASS" if registrar else "WARN"
-    return CheckResult(5, "Registrar Details Transparency", status, evidence=f"registrar={registrar}")
+        status = "PASS" if registrar else "WARN"
+        return CheckResult(5, "Registrar Details Transparency", status, evidence=f"registrar={registrar}")
+    except Exception as e:
+        return CheckResult(5, "Registrar Details Transparency", "WARN", evidence=f"Error: {str(e)[:100]}")
 
 def check_domain_expiry(url: str) -> CheckResult:
     # (6) Expiration via WHOIS with RDAP fallback
@@ -214,13 +230,15 @@ def check_domain_expiry(url: str) -> CheckResult:
 
     try:
         from datetime import datetime, timezone
+        if not isinstance(ed, datetime):
+            return CheckResult(6, "Domain Expiry and Renewal", "WARN", evidence="Invalid expiration_date format")
         if not getattr(ed, "tzinfo", None):
             ed = ed.replace(tzinfo=timezone.utc)
         days_left = (ed - datetime.now(timezone.utc)).days
         status = "WARN" if days_left < 30 else "PASS"
         return CheckResult(6, "Domain Expiry and Renewal", status, evidence=f"days_left={days_left}")
-    except Exception:
-        return CheckResult(6, "Domain Expiry and Renewal", "WARN", evidence="parse error")
+    except Exception as e:
+        return CheckResult(6, "Domain Expiry and Renewal", "WARN", evidence=f"Parse error: {str(e)[:100]}")
 
 def check_previous_ownership(url: str) -> CheckResult:
     # (7) Ownership/registrant changes via RDAP; optional DomainTools if configured
