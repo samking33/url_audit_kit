@@ -12,7 +12,8 @@ from starlette.websockets import WebSocketDisconnect
 
 from url_audit.runner import run_all_with_context, summarize, total_steps
 
-load_dotenv(override=True)
+# In production (Render), platform env vars should take precedence over any local .env file.
+load_dotenv(override=False)
 
 app = FastAPI(
     title="URL Audit Kit API",
