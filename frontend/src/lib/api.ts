@@ -27,12 +27,12 @@ export async function runAudit(options: RunAuditOptions): Promise<AuditResponse>
 
   let pct = 0;
   const progressTimer = setInterval(() => {
-    if (pct < 96) {
-      pct = Math.min(96, pct + (pct < 70 ? 6 : pct < 88 ? 3 : 1));
-      const label = pct >= 92 ? 'Finalizing results...' : 'Analyzing...';
+    if (pct < 95) {
+      pct = Math.min(95, pct + (pct < 55 ? 7 : pct < 78 ? 4 : pct < 88 ? 2 : 1));
+      const label = pct >= 88 ? 'Waiting for server response...' : 'Analyzing...';
       options.onProgress?.(Math.round(pct), label);
     }
-  }, 900);
+  }, 1000);
 
   try {
     const response = await fetch('/api/audit', { method: 'POST', body: formData });

@@ -33,9 +33,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const startedAt = Date.now();
 
   try {
-    const { results, grouped_results, counts } = await runAll(url);
+    const { results, grouped_results, counts } = await runAll(url, scanMode as 'scan' | 'deep' | 'sandbox');
     const providerStatuses = getProviderStatuses();
-    const analysis = await analyzeResultsWithNim(results);
+    const analysis = scanMode === 'scan'
+      ? { enabled: false, error: 'AI threat report skipped in scan mode' }
+      : await analyzeResultsWithNim(results);
     const threatReport = analysis.enabled ? analysis.threat_report || null : null;
     const metadata = analysis.enabled ? analysis.metadata || null : null;
     const analysisError = analysis.enabled ? null : (analysis.error || null);

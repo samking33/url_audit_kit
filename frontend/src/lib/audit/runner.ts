@@ -1,5 +1,6 @@
 import type { CheckResult } from './checks';
 import * as C from './checks';
+import type { ScanMode } from '@/types';
 
 type CheckFn = (url: string) => Promise<CheckResult | CheckResult[]>;
 
@@ -48,6 +49,35 @@ const CHECK_STEPS: Array<{ label: string; fn: CheckFn }> = [
   { label: 'Ads & Prompts', fn: C.checkAdsPrompts },
   { label: 'AI Content Analysis', fn: C.checkLlmContentAnalysis },
 ];
+
+const CORE_SCAN_LABELS = new Set([
+  'Domain Name Legitimacy',
+  'Top-Level Domain (TLD)',
+  'WHOIS and Domain Age',
+  'DNS / Email Records',
+  'Registrar Details Transparency',
+  'Domain Expiry',
+  'SSL Validity',
+  'HTTPS Presence',
+  'Certificate Issuer',
+  'Security Headers',
+  'IP Reputation',
+  'Server Geolocation',
+  'Hosting Provider',
+  'Mozilla Observatory',
+  'Content Quality',
+  'Contact Information',
+  'About / Privacy',
+  'Security Blacklists',
+  'Google Safe Browsing',
+  'Redirect Behaviour',
+  'Suspicious Requests',
+  'URL Length',
+  'Homoglyph Detection',
+]);
+
+const STEP_TIMEOUT_MS = 6000;
+const MAX_CONCURRENCY = 8;
 
 export function totalSteps(): number {
   return CHECK_STEPS.length;
@@ -129,40 +159,59 @@ function groupBySection(results: PreparedResult[]): Array<{ name: string; checks
   return Array.from(sections.entries()).map(([name, checks]) => ({ name, checks }));
 }
 
-export async function runAll(url: string): Promise<{
+function selectSteps(scanMode: ScanMode): Array<{ label: string; fn: CheckFn }> {
+  if (scanMode === 'deep' || scanMode === 'sandbox') return CHECK_STEPS;
+  return CHECK_STEPS.filter((step) => CORE_SCAN_LABELS.has(step.label));
+}
+
+async function runStep(step: { label: string; fn: CheckFn }, url: string): Promise<PreparedResult[]> {
+  try {
+    const raw = await Promise.race([
+      step.fn(url),
+      new Promise<CheckResult>((_, reject) =>
+        setTimeout(() => reject(new Error(`timeout after ${STEP_TIMEOUT_MS}ms`)), STEP_TIMEOUT_MS)
+      ),
+    ]);
+    const list = Array.isArray(raw) ? raw : [raw];
+    return list.map(prepareResult);
+  } catch (e) {
+    return [{
+      id: 999,
+      name: step.label,
+      status: 'FAIL',
+      badge: 'danger',
+      icon: 'dangerous',
+      evidence: `check crashed: ${String(e).slice(0, 200)}`,
+      details: '',
+      data: { error: String(e) },
+      summary: `check crashed: ${String(e).slice(0, 100)}`,
+      risk_level: 'HIGH',
+      section: lookupSection(step.label),
+    }];
+  }
+}
+
+export async function runAll(url: string, scanMode: ScanMode = 'scan'): Promise<{
   results: PreparedResult[];
   grouped_results: Array<{ name: string; checks: PreparedResult[] }>;
   counts: Record<string, number>;
 }> {
-  const allResults: PreparedResult[] = [];
+  const steps = selectSteps(scanMode);
+  const buckets: PreparedResult[][] = new Array(steps.length);
   const counts: Record<string, number> = { PASS: 0, WARN: 0, FAIL: 0, INFO: 0, SKIP: 0 };
 
-  for (const step of CHECK_STEPS) {
-    try {
-      const raw = await step.fn(url);
-      const list = Array.isArray(raw) ? raw : [raw];
-      for (const r of list) {
-        const prepared = prepareResult(r);
-        allResults.push(prepared);
-        counts[prepared.status] = (counts[prepared.status] || 0) + 1;
-      }
-    } catch (e) {
-      const fallback: PreparedResult = {
-        id: 999,
-        name: step.label,
-        status: 'FAIL',
-        badge: 'danger',
-        icon: 'dangerous',
-        evidence: `check crashed: ${String(e).slice(0, 200)}`,
-        details: '',
-        data: { error: String(e) },
-        summary: `check crashed: ${String(e).slice(0, 100)}`,
-        risk_level: 'HIGH',
-        section: lookupSection(step.label),
-      };
-      allResults.push(fallback);
-      counts['FAIL'] = (counts['FAIL'] || 0) + 1;
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(MAX_CONCURRENCY, steps.length) }, async () => {
+    while (cursor < steps.length) {
+      const index = cursor++;
+      buckets[index] = await runStep(steps[index], url);
     }
+  });
+  await Promise.all(workers);
+
+  const allResults = buckets.flat();
+  for (const prepared of allResults) {
+    counts[prepared.status] = (counts[prepared.status] || 0) + 1;
   }
 
   return {

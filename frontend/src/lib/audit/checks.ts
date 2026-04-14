@@ -183,7 +183,7 @@ async function runPageSpeed(url: string): Promise<Record<string, unknown> | null
   });
   const res = await fetch(`https://pagespeedonline.googleapis.com/pagespeedonline/v5/runPagespeed?${params.toString()}`, {
     headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(8000),
   }).catch(() => null);
   if (!res?.ok) return null;
   return res.json() as Promise<Record<string, unknown>>;
@@ -221,8 +221,8 @@ async function runGtmetrixTest(url: string): Promise<Record<string, unknown> | n
   const testId = started.data?.id;
   if (!testId) return null;
 
-  for (let i = 0; i < 5; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+  for (let i = 0; i < 1; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
     const statusRes = await fetch(`https://gtmetrix.com/api/2.0/tests/${testId}`, {
       headers: {
         Authorization: gtmetrixAuthHeader(),
@@ -600,13 +600,15 @@ export async function checkPageLoadSpeed(url: string): Promise<CheckResult> {
   try {
     const gtmetrixEnabled = Boolean(SERVER_CONFIG.GTMETRIX_API_KEY) && SERVER_CONFIG.DISABLE_GTMETRIX !== '1';
     const start = Date.now();
-    const res = await fetchGet(url, 30000);
+    const [res, pageSpeed, gtmetrix] = await Promise.all([
+      fetchGet(url, 12000),
+      runPageSpeed(url),
+      gtmetrixEnabled ? runGtmetrixTest(url) : Promise.resolve(null),
+    ]);
     const totalMs = Date.now() - start;
     if (!res) return warn(16, 'Page Load Speed', 'request failed or timed out');
     const body = await res.text().catch(() => '');
     const sizeKb = Buffer.byteLength(body, 'utf8') / 1024;
-    const pageSpeed = await runPageSpeed(url);
-    const gtmetrix = gtmetrixEnabled ? await runGtmetrixTest(url) : null;
     const pageSpeedScore = Number((((pageSpeed?.lighthouseResult as Record<string, unknown> | undefined)?.categories as Record<string, unknown> | undefined)?.performance as Record<string, unknown> | undefined)?.score || 0);
     const gtmetrixAttrs = (gtmetrix?.data as Record<string, unknown> | undefined)?.attributes as Record<string, unknown> | undefined;
     const gtmetrixScore = Number(gtmetrixAttrs?.performance_score || 0);
