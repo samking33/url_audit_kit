@@ -1,8 +1,8 @@
 /**
- * SQLite database layer using better-sqlite3.
+ * SQLite database layer using node-sqlite3-wasm.
  * Schema mirrors the Python webapp/persistence.py exactly.
  */
-import Database from 'better-sqlite3';
+import { Database } from 'node-sqlite3-wasm';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -15,20 +15,19 @@ function dbPath(): string {
   return path.join(dir, 'url_audit.db');
 }
 
-let _db: Database.Database | null = null;
+let _db: Database | null = null;
 
-export function getDb(): Database.Database {
+export function getDb(): Database {
   if (_db) return _db;
   const p = dbPath();
   fs.mkdirSync(path.dirname(p), { recursive: true });
   _db = new Database(p);
-  _db.pragma('foreign_keys = ON');
-  _db.pragma('journal_mode = WAL');
+  _db.exec('PRAGMA journal_mode = WAL;');
   initSchema(_db);
   return _db;
 }
 
-function initSchema(db: Database.Database): void {
+function initSchema(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS scans (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -116,33 +116,40 @@ export function persistScan(input: ScanInput): { scan_id: number; ioc_count: num
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 
-  const run = db.transaction(() => {
-    const result = insertScan.run(
+  try {
+    db.exec('BEGIN TRANSACTION');
+
+    const result = insertScan.run([
       input.target_url, input.scan_mode, input.risk_score, input.risk_level, input.verdict,
       Object.values(input.counts).reduce((a, b) => a + b, 0),
       input.counts['PASS'] || 0, input.counts['WARN'] || 0, input.counts['FAIL'] || 0,
       input.counts['INFO'] || 0, input.counts['SKIP'] || 0,
       aiVerdict, aiSummary, threatReportJson, input.duration_ms, ts,
-    );
+    ]);
     const scanId = Number(result.lastInsertRowid);
 
     for (const check of input.prepared_results) {
-      insertCheck.run(
+      insertCheck.run([
         scanId, check.id, check.name, check.status, check.risk_level,
         check.section, check.evidence, check.details,
         JSON.stringify(check.data || {}), check.summary,
-      );
+      ]);
     }
 
     for (const ioc of iocs) {
-      insertIoc.run(scanId, ioc.indicator, ioc.indicator_type, ioc.severity, ioc.source_check, ioc.country, ioc.created_at);
+      insertIoc.run([scanId, ioc.indicator, ioc.indicator_type, ioc.severity, ioc.source_check, ioc.country, ioc.created_at]);
     }
 
-    return scanId;
-  });
-
-  const scanId = run() as number;
-  return { scan_id: scanId, ioc_count: iocs.length };
+    db.exec('COMMIT');
+    return { scan_id: scanId, ioc_count: iocs.length };
+  } catch (error) {
+    if (db.inTransaction) db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    insertScan.finalize();
+    insertCheck.finalize();
+    insertIoc.finalize();
+  }
 }
 
 // ─── Query helpers ─────────────────────────────────────────────────────────────
@@ -229,26 +236,26 @@ export function listScans(params: {
   const direction = (params.sort_order || 'desc').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
   const whereSQL = where.join(' AND ');
 
-  const total = (db.prepare(`SELECT COUNT(*) as c FROM scans WHERE ${whereSQL}`).get(...args) as { c: number }).c;
-  const rows = db.prepare(`SELECT * FROM scans WHERE ${whereSQL} ORDER BY ${orderField} ${direction} LIMIT ? OFFSET ?`).all(...args, pageSize, offset) as Array<Record<string, unknown>>;
+  const total = (db.get(`SELECT COUNT(*) as c FROM scans WHERE ${whereSQL}`, args) as { c: number }).c;
+  const rows = db.all(`SELECT * FROM scans WHERE ${whereSQL} ORDER BY ${orderField} ${direction} LIMIT ? OFFSET ?`, [...args, pageSize, offset]) as Array<Record<string, unknown>>;
 
   return { items: rows, ...buildPage(total, page, pageSize) };
 }
 
 export function getScan(scanId: number) {
   const db = getDb();
-  const scan = db.prepare('SELECT * FROM scans WHERE id = ?').get(scanId) as Record<string, unknown> | undefined;
+  const scan = db.get('SELECT * FROM scans WHERE id = ?', scanId) as Record<string, unknown> | null;
   if (!scan) return null;
 
-  const checks = db.prepare(`
+  const checks = db.all(`
     SELECT check_id, name, status, risk_level, section, evidence, details, data_json, summary
     FROM scan_checks WHERE scan_id = ? ORDER BY check_id ASC, id ASC
-  `).all(scanId) as Array<Record<string, unknown>>;
+  `, scanId) as Array<Record<string, unknown>>;
 
-  const iocs = db.prepare(`
+  const iocs = db.all(`
     SELECT id, indicator, indicator_type, severity, source_check, country, created_at
     FROM iocs WHERE scan_id = ? ORDER BY id DESC
-  `).all(scanId) as Array<Record<string, unknown>>;
+  `, scanId) as Array<Record<string, unknown>>;
 
   return {
     ...scan,
@@ -342,12 +349,12 @@ export function listIocs(params: {
   const direction = (params.sort_order || 'desc').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
   const whereSQL = where.join(' AND ');
 
-  const total = (db.prepare(`SELECT COUNT(*) as c FROM iocs i WHERE ${whereSQL}`).get(...args) as { c: number }).c;
-  const rows = db.prepare(`
+  const total = (db.get(`SELECT COUNT(*) as c FROM iocs i WHERE ${whereSQL}`, args) as { c: number }).c;
+  const rows = db.all(`
     SELECT i.*, s.target_url, s.risk_level, s.risk_score
     FROM iocs i JOIN scans s ON s.id = i.scan_id
     WHERE ${whereSQL} ORDER BY ${orderField} ${direction} LIMIT ? OFFSET ?
-  `).all(...args, pageSize, offset) as Array<Record<string, unknown>>;
+  `, [...args, pageSize, offset]) as Array<Record<string, unknown>>;
 
   return { items: rows, ...buildPage(total, page, pageSize) };
 }
