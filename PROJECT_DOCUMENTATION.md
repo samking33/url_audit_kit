@@ -122,19 +122,13 @@ Build a production-ready URL auditing application that provides comprehensive, e
 ## e. Implementation Tools
 
 ## 1. Languages and Runtime
-- Python 3.9+ (backend and audit engine)
-- TypeScript/JavaScript (frontend)
-- Node.js 18+ (frontend runtime)
+- TypeScript/JavaScript
+- Node.js 18+
 
 ## 2. Backend Frameworks and Libraries
-- FastAPI: REST API + websocket progress channel
-- Uvicorn: ASGI application server
-- Requests: HTTP client for target fetch and protocol checks
-- BeautifulSoup4: HTML parsing with parser fallback strategy
-- tldextract + python-whois + dnspython: domain and DNS intelligence
-- python-dateutil: robust timestamp parsing
-- python-dotenv: environment variable loading
-- pydantic: schema and validation support in API stack
+- Next.js Route Handlers for server APIs
+- Native `fetch`, `dns`, `tls`, and `net` for runtime checks
+- `node-sqlite3-wasm` for portable SQLite persistence
 
 ## 3. Frontend Stack
 - Next.js 14
@@ -148,16 +142,11 @@ Build a production-ready URL auditing application that provides comprehensive, e
 - Timeout and base URL configurable from environment
 
 ## 5. Quality and Validation Tooling
-- Python unittest test suite:
-  - URL normalization behavior
-  - parser fallback behavior
-  - runner invariant behavior
-  - API output contract behavior
 - Frontend production build validation via `next build`
 
 ## 6. DevOps and Execution
 - Stateless process model, no DB migration lifecycle
-- Two-service local run model:
+- Single-service Node.js run model
   - Backend on port `8765`
   - Frontend on port `3000`
 
@@ -276,12 +265,12 @@ Deliverables:
 - Status summaries and grouped findings
 - AI threat report visualization
 
-2. **Backend API (FastAPI)**
+2. **Backend API (Next.js Route Handlers)**
 - `POST /api/audit`: audit trigger endpoint
 - `GET /healthz`: health check
-- `WS /ws/progress/{job_id}`: live progress events
+- `GET /api/*`: dashboard, scan, IOC, and report data
 
-3. **Audit Engine (`url_audit`)**
+3. **Audit Engine**
 - URL preflight/normalization
 - Deterministic check orchestration
 - Evidence and status shaping

@@ -21,7 +21,10 @@ env/
 # Project outputs
 report.json
 *.log
+node_modules/
 frontend/node_modules/
+data/*.db
+frontend/tsconfig.tsbuildinfo
 frontend/.next/
 frontend/.vercel/
 

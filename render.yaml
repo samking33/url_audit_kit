@@ -1,27 +1,19 @@
 services:
-  # ── Backend (Python / FastAPI) ────────────────────────────────────────────
   - type: web
-    name: url-audit-kit-backend
-    env: python
+    name: url-audit-kit
+    env: node
+    repo: https://github.com/samking33/url_audit_kit
     region: oregon
     plan: free
     branch: main
-    buildCommand: pip install -r requirements.txt
-    startCommand: python -m webapp
-    healthCheckPath: /healthz
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
     envVars:
-      - key: FRONTEND_APP_URL
-        value: https://url-audit-kit-frontend.onrender.com
+      - key: NODE_VERSION
+        value: 20
       - key: URL_AUDIT_DB_PATH
-        value: /data/url_audit.db
-      - key: VIRUSTOTAL_API_KEY
-        sync: false
-      - key: ABUSEIPDB_API_KEY
-        sync: false
-      - key: GOOGLE_SAFE_BROWSING_API_KEY
-        sync: false
-      - key: IPINFO_TOKEN
-        sync: false
+        value: /tmp/url_audit.db
       - key: AI_PROVIDER
         value: nim
       - key: NVIDIA_NIM_API_KEY
@@ -30,25 +22,3 @@ services:
         value: https://integrate.api.nvidia.com/v1
       - key: NVIDIA_NIM_MODEL
         value: meta/llama-3.1-70b-instruct
-    disk:
-      name: url-audit-data
-      mountPath: /data
-      sizeGB: 1
-
-  # ── Frontend (Next.js) ───────────────────────────────────────────────────
-  - type: web
-    name: url-audit-kit-frontend
-    env: node
-    region: oregon
-    plan: free
-    branch: main
-    rootDir: frontend
-    buildCommand: npm ci && npm run build
-    startCommand: npm start
-    envVars:
-      - key: NEXT_PUBLIC_API_URL
-        value: https://url-audit-kit-backend.onrender.com
-      - key: NEXT_PUBLIC_WS_URL
-        value: wss://url-audit-kit-backend.onrender.com
-      - key: NODE_VERSION
-        value: 20

@@ -25,7 +25,7 @@ export default function SettingsPage() {
           <h2>System Health</h2>
           <ul className="details-list">
             <li>
-              <span>Backend API</span>
+              <span>API Runtime</span>
               <span>{status}</span>
             </li>
             <li>
@@ -43,12 +43,12 @@ export default function SettingsPage() {
           <h2>Endpoint Configuration</h2>
           <ul className="details-list">
             <li>
-              <span>API Proxy</span>
-              <code>/api/* → backend</code>
+              <span>API Routes</span>
+              <code>/api/* → Next.js route handlers</code>
             </li>
             <li>
-              <span>Progress WebSocket</span>
-              <code>{process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8765'}/ws/progress/:jobId</code>
+              <span>Deployment Mode</span>
+              <code>Single Node.js application</code>
             </li>
             <li>
               <span>Frontend URL</span>

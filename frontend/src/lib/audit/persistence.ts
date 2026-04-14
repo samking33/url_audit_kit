@@ -1,5 +1,5 @@
 /**
- * Persistence layer – TypeScript port of Python webapp/persistence.py
+ * SQLite persistence layer for the Next.js application.
  */
 import { getDb } from './db';
 import type { PreparedResult } from './runner';

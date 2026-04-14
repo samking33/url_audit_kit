@@ -1,10 +1,11 @@
 /**
- * URL audit checks – TypeScript port of the Python url_audit/checks/* modules.
+ * URL audit checks for the Next.js Node runtime.
  * Uses only Node.js built-ins (dns, tls, net, fetch) plus simple heuristics.
  */
 import * as dns from 'dns/promises';
 import * as tls from 'tls';
 import * as net from 'net';
+import { analyzeTextWithNim } from './ai';
 
 export interface CheckResult {
   id: number;
@@ -681,5 +682,33 @@ export async function checkAdsPrompts(url: string): Promise<CheckResult> {
 // ─── AI/LLM check ─────────────────────────────────────────────────────────────
 
 export async function checkLlmContentAnalysis(url: string): Promise<CheckResult> {
-  return info(43, 'AI Content Analysis', 'ai_analysis=skipped (AI_PROVIDER not configured in Node.js mode)');
+  try {
+    const text = await fetchText(url);
+    if (!text) return info(43, 'AI Content Analysis', 'Could not fetch page content');
+    const plainText = text.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (plainText.length < 50) return info(43, 'AI Content Analysis', 'Insufficient text content');
+
+    const analysis = await analyzeTextWithNim(plainText, extractHost(url) || 'unknown');
+    if (!analysis.enabled) {
+      const reason = analysis.summary || analysis.error || 'LLM unavailable';
+      return info(43, 'AI Content Analysis', String(reason).slice(0, 200));
+    }
+
+    const risks: string[] = [];
+    if (String(analysis.grammar_issues || '').toUpperCase().includes('YES')) risks.push('grammar');
+    if (String(analysis.too_good_claims || '').toUpperCase().includes('YES')) risks.push('too-good-claims');
+    if (String(analysis.credential_or_payment_risk || '').toUpperCase().includes('YES')) risks.push('credential-risk');
+    if (String(analysis.brand_mismatch || '').toUpperCase().includes('YES')) risks.push('brand-mismatch');
+    if (String(analysis.phishy_tone || '').toUpperCase().includes('YES')) risks.push('phishy-tone');
+
+    const overall = String(analysis.overall_risk || 'LOW').toUpperCase();
+    const status: CheckResult['status'] = overall === 'HIGH' ? 'FAIL' : (overall === 'MEDIUM' || risks.length ? 'WARN' : 'PASS');
+    let evidence = `risk=${overall}`;
+    if (risks.length) evidence += ` flags=${risks.join(',')}`;
+    if (analysis.summary) evidence += ` | ${String(analysis.summary).slice(0, 150)}`;
+
+    return { id: 43, name: 'AI Content Analysis', status, evidence, data: analysis as Record<string, unknown> };
+  } catch (e) {
+    return warn(43, 'AI Content Analysis', `Analysis error: ${String(e).slice(0, 150)}`);
+  }
 }

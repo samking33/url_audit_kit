@@ -1,6 +1,6 @@
 /**
  * SQLite database layer using node-sqlite3-wasm.
- * Schema mirrors the Python webapp/persistence.py exactly.
+ * Schema used by the Next.js application.
  */
 import { Database } from 'node-sqlite3-wasm';
 import * as path from 'path';

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { runAll } from '@/lib/audit/runner';
 import { computeRisk } from '@/lib/audit/risk';
 import { persistScan } from '@/lib/audit/persistence';
+import { analyzeResultsWithNim } from '@/lib/audit/ai';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -32,6 +33,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   try {
     const { results, grouped_results, counts } = await runAll(url);
+    const analysis = await analyzeResultsWithNim(results);
+    const threatReport = analysis.enabled ? analysis.threat_report || null : null;
+    const metadata = analysis.enabled ? analysis.metadata || null : null;
+    const analysisError = analysis.enabled ? null : (analysis.error || null);
     const riskMeta = computeRisk(results);
     const createdAt = new Date().toISOString();
     const durationMs = Date.now() - startedAt;
@@ -44,7 +49,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       risk_score: riskMeta.risk_score,
       risk_level: riskMeta.risk_level,
       verdict: riskMeta.verdict,
-      threat_report: null,
+      threat_report: threatReport,
       duration_ms: durationMs,
       created_at: createdAt,
     });
@@ -62,9 +67,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       summary_cards: summaryCards,
       target_url: url,
       total_checks: results.length,
-      ai_threat_report: null,
-      ai_metadata: null,
-      ai_error: null,
+      ai_threat_report: threatReport,
+      ai_metadata: metadata,
+      ai_error: analysisError,
       scan_id,
       scan_mode: scanMode,
       risk_score: riskMeta.risk_score,

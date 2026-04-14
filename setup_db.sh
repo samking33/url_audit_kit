@@ -1,5 +1,5 @@
 #!/bin/bash
 
-echo "No database setup is required for URL Audit Kit."
-echo "Start backend with: python -m webapp"
-echo "Start frontend with: cd frontend && npm run dev"
+echo "No separate database setup is required."
+echo "The Node.js app will create the SQLite database automatically."
+echo "Start the app with: cd frontend && npm run dev"
