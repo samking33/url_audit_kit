@@ -103,9 +103,9 @@ export default function DashboardPage() {
 
   const activityGraphData = useMemo(
     () =>
-      overview.scan_activity.map((item) => ({
+      (overview.scan_activity ?? []).map((item) => ({
         ...item,
-        label: item.bucket.slice(5),
+        label: (item.bucket ?? '').slice(5),
       })),
     [overview.scan_activity]
   );
@@ -162,7 +162,7 @@ export default function DashboardPage() {
                   outerRadius={92}
                   paddingAngle={4}
                 >
-                  {overview.threat_distribution.map((entry) => (
+                  {(overview.threat_distribution ?? []).map((entry) => (
                     <Cell key={entry.label} fill={PIE_COLORS[entry.label]} />
                   ))}
                 </Pie>
@@ -171,7 +171,7 @@ export default function DashboardPage() {
             </ResponsiveContainer>
           </div>
           <div className="legend-row">
-            {overview.threat_distribution.map((item) => (
+            {(overview.threat_distribution ?? []).map((item) => (
               <span key={item.label} className={`legend-item ${riskClass(item.label)}`}>
                 {item.label}: {item.value}
               </span>

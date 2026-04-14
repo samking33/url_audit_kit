@@ -65,14 +65,14 @@ export default function DataTable<T>(props: DataTableProps<T>) {
             </tr>
           </thead>
           <tbody>
-            {props.rows.length === 0 && (
+            {(props.rows ?? []).length === 0 && (
               <tr>
                 <td colSpan={props.columns.length} className="empty-cell">
                   {props.emptyMessage}
                 </td>
               </tr>
             )}
-            {props.rows.map((row, index) => (
+            {(props.rows ?? []).map((row, index) => (
               <tr key={index}>
                 {props.columns.map((column) => (
                   <td key={column.key}>{column.render(row)}</td>
