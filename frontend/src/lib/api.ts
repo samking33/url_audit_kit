@@ -25,14 +25,14 @@ export async function runAudit(options: RunAuditOptions): Promise<AuditResponse>
   formData.append('url', options.url);
   formData.append('scan_mode', options.scanMode);
 
-  // Simulate progress animation while waiting for the server
   let pct = 0;
   const progressTimer = setInterval(() => {
-    if (pct < 90) {
-      pct = Math.min(90, pct + Math.random() * 4 + 1);
-      options.onProgress?.(Math.round(pct), 'Analyzing...');
+    if (pct < 96) {
+      pct = Math.min(96, pct + (pct < 70 ? 6 : pct < 88 ? 3 : 1));
+      const label = pct >= 92 ? 'Finalizing results...' : 'Analyzing...';
+      options.onProgress?.(Math.round(pct), label);
     }
-  }, 800);
+  }, 900);
 
   try {
     const response = await fetch('/api/audit', { method: 'POST', body: formData });

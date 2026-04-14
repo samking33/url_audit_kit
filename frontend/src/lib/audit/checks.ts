@@ -49,6 +49,14 @@ function extractTld(url: string): string {
   return parts.length >= 2 ? parts[parts.length - 1] : '';
 }
 
+const REQUEST_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (compatible; URLAuditKit/2.0; +https://url-audit-kit.onrender.com)',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Cache-Control': 'no-cache',
+  Pragma: 'no-cache',
+};
+
 async function fetchHead(url: string, timeoutMs = 15000): Promise<Response | null> {
   try {
     const controller = new AbortController();
@@ -56,8 +64,19 @@ async function fetchHead(url: string, timeoutMs = 15000): Promise<Response | nul
     const res = await fetch(url, {
       method: 'HEAD',
       redirect: 'follow',
+      headers: REQUEST_HEADERS,
       signal: controller.signal,
     });
+    if (res.status === 405 || res.status === 403) {
+      const fallback = await fetch(url, {
+        method: 'GET',
+        redirect: 'follow',
+        headers: REQUEST_HEADERS,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      return fallback;
+    }
     clearTimeout(timer);
     return res;
   } catch {
@@ -72,6 +91,7 @@ async function fetchGet(url: string, timeoutMs = 20000): Promise<Response | null
     const res = await fetch(url, {
       method: 'GET',
       redirect: 'follow',
+      headers: REQUEST_HEADERS,
       signal: controller.signal,
     });
     clearTimeout(timer);
