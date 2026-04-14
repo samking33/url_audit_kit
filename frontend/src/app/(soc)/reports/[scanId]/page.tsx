@@ -73,7 +73,7 @@ export default function ReportDetailPage() {
   useEffect(() => {
     if (!Number.isFinite(scanId)) return;
     getScanReport(scanId)
-      .then((data) => setPayload(data))
+      .then((data) => setPayload(data as ReportPayload))
       .catch(() => setError('Failed to load report.'));
   }, [scanId]);
 

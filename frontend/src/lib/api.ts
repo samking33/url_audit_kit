@@ -6,61 +6,44 @@ import type {
   ScanMode,
   ScanRecord,
   ThreatMapPoint,
-  WebSocketMessage,
 } from '@/types';
-
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8765';
 
 export interface RunAuditOptions {
   url: string;
   scanMode: ScanMode;
-  onProgress?: (message: WebSocketMessage) => void;
+  onProgress?: (percent: number, label: string) => void;
 }
 
 async function fetchJSON<T>(path: string): Promise<T> {
-  const response = await fetch(path, {
-    method: 'GET',
-    cache: 'no-store',
-  });
-  if (!response.ok) {
-    throw new Error(`Request failed (${response.status})`);
-  }
+  const response = await fetch(path, { method: 'GET', cache: 'no-store' });
+  if (!response.ok) throw new Error(`Request failed (${response.status})`);
   return response.json();
 }
 
 export async function runAudit(options: RunAuditOptions): Promise<AuditResponse> {
-  const jobId = crypto.randomUUID();
-  const ws = new WebSocket(`${WS_URL}/ws/progress/${jobId}`);
-
-  ws.onmessage = (event) => {
-    try {
-      const payload = JSON.parse(event.data) as WebSocketMessage;
-      options.onProgress?.(payload);
-      if (payload.type === 'complete' || payload.type === 'error') {
-        ws.close();
-      }
-    } catch {
-      // no-op
-    }
-  };
-
   const formData = new FormData();
   formData.append('url', options.url);
-  formData.append('job_id', jobId);
   formData.append('scan_mode', options.scanMode);
 
-  const response = await fetch('/api/audit', {
-    method: 'POST',
-    body: formData,
-  });
-  if (!response.ok) {
-    ws.close();
-    throw new Error(`Audit failed (${response.status})`);
-  }
+  // Simulate progress animation while waiting for the server
+  let pct = 0;
+  const progressTimer = setInterval(() => {
+    if (pct < 90) {
+      pct = Math.min(90, pct + Math.random() * 4 + 1);
+      options.onProgress?.(Math.round(pct), 'Analyzing...');
+    }
+  }, 800);
 
-  const payload = (await response.json()) as AuditResponse;
-  ws.close();
-  return payload;
+  try {
+    const response = await fetch('/api/audit', { method: 'POST', body: formData });
+    clearInterval(progressTimer);
+    if (!response.ok) throw new Error(`Audit failed (${response.status})`);
+    options.onProgress?.(100, 'Complete');
+    return (await response.json()) as AuditResponse;
+  } catch (e) {
+    clearInterval(progressTimer);
+    throw e;
+  }
 }
 
 export async function getDashboardOverview(range: string): Promise<DashboardOverview> {
@@ -68,13 +51,8 @@ export async function getDashboardOverview(range: string): Promise<DashboardOver
 }
 
 export async function getScans(params: {
-  page: number;
-  pageSize: number;
-  q: string;
-  risk: string;
-  status: string;
-  sortBy: string;
-  sortOrder: 'asc' | 'desc';
+  page: number; pageSize: number; q: string; risk: string;
+  status: string; sortBy: string; sortOrder: 'asc' | 'desc';
 }): Promise<PagedResponse<ScanRecord>> {
   const searchParams = new URLSearchParams({
     page: String(params.page),
@@ -85,25 +63,20 @@ export async function getScans(params: {
     sort_by: params.sortBy,
     sort_order: params.sortOrder,
   });
-  return fetchJSON<PagedResponse<ScanRecord>>(`/api/scans?${searchParams.toString()}`);
+  return fetchJSON<PagedResponse<ScanRecord>>(`/api/scans?${searchParams}`);
 }
 
-export async function getScan(scanId: number): Promise<ScanRecord & { checks: any[]; iocs: IOCRecord[] }> {
+export async function getScan(scanId: number): Promise<ScanRecord & { checks: unknown[]; iocs: IOCRecord[] }> {
   return fetchJSON(`/api/scans/${scanId}`);
 }
 
-export async function getScanReport(scanId: number): Promise<any> {
+export async function getScanReport(scanId: number): Promise<unknown> {
   return fetchJSON(`/api/scans/${scanId}/report`);
 }
 
 export async function getIOCs(params: {
-  page: number;
-  pageSize: number;
-  q: string;
-  type: string;
-  severity: string;
-  sortBy: string;
-  sortOrder: 'asc' | 'desc';
+  page: number; pageSize: number; q: string; type: string; severity: string;
+  sortBy: string; sortOrder: 'asc' | 'desc';
 }): Promise<PagedResponse<IOCRecord>> {
   const searchParams = new URLSearchParams({
     page: String(params.page),
@@ -114,7 +87,7 @@ export async function getIOCs(params: {
     sort_by: params.sortBy,
     sort_order: params.sortOrder,
   });
-  return fetchJSON<PagedResponse<IOCRecord>>(`/api/iocs?${searchParams.toString()}`);
+  return fetchJSON<PagedResponse<IOCRecord>>(`/api/iocs?${searchParams}`);
 }
 
 export async function getThreatMap(range: string): Promise<{ points: ThreatMapPoint[] }> {
@@ -125,8 +98,6 @@ export async function getThreatDomains(limit = 20): Promise<{ items: Array<{ dom
   return fetchJSON(`/api/threat-intelligence/domains?limit=${limit}`);
 }
 
-export async function getThreatIpReputation(
-  limit = 20
-): Promise<{ items: Array<{ ip: string; sightings: number; critical_hits: number; high_hits: number; medium_hits: number; last_seen: string }> }> {
+export async function getThreatIpReputation(limit = 20): Promise<{ items: Array<{ ip: string; sightings: number; critical_hits: number; high_hits: number; medium_hits: number; last_seen: string }> }> {
   return fetchJSON(`/api/threat-intelligence/ip-reputation?limit=${limit}`);
 }

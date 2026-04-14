@@ -65,12 +65,9 @@ export default function ScannerPage() {
       const payload = await runAudit({
         url,
         scanMode,
-        onProgress: (message) => {
-          setProgress(message.percent ?? 0);
-          setProgressLabel(message.label || 'Scanning...');
-          if (message.type === 'error') {
-            setError(message.message || 'Scan failed');
-          }
+        onProgress: (percent, label) => {
+          setProgress(percent);
+          setProgressLabel(label || 'Scanning...');
         },
       });
       setResult(payload);
