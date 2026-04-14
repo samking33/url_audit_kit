@@ -45,6 +45,7 @@ export interface AuditResponse {
   duration_ms?: number;
   created_at?: string;
   ioc_count?: number;
+  provider_statuses?: Record<string, boolean>;
 }
 
 export interface SummaryCard {

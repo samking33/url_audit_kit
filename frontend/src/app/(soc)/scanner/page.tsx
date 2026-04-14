@@ -16,6 +16,16 @@ function parseValue(evidence: string, key: string): string {
   return match?.[1] || 'unknown';
 }
 
+function geolocationLabel(check?: CheckResult): string {
+  const data = check?.data as Record<string, unknown> | undefined;
+  const city = String(data?.city || '').trim();
+  const region = String(data?.region || '').trim();
+  const country = String(data?.country || '').trim();
+  const location = [city, region, country].filter(Boolean).join(', ');
+  if (location) return location;
+  return parseValue(check?.evidence || '', 'country');
+}
+
 export default function ScannerPage() {
   const [url, setUrl] = useState('');
   const [scanMode, setScanMode] = useState<ScanMode>('scan');
@@ -185,7 +195,7 @@ export default function ScannerPage() {
                 </li>
                 <li>
                   <span>IP Location</span>
-                  <span>{parseValue(geolocationCheck?.evidence || '', 'country')}</span>
+                  <span>{geolocationLabel(geolocationCheck)}</span>
                 </li>
                 <li>
                   <span>IP Reputation</span>
