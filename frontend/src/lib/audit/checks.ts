@@ -5,7 +5,9 @@
 import * as dns from 'dns/promises';
 import * as tls from 'tls';
 import * as net from 'net';
+import * as fs from 'fs';
 import { analyzeTextWithNim } from './ai';
+import { getServerConfig } from '../server-config';
 
 export interface CheckResult {
   id: number;
@@ -57,6 +59,8 @@ const REQUEST_HEADERS = {
   Pragma: 'no-cache',
 };
 
+const SERVER_CONFIG = getServerConfig();
+
 async function fetchHead(url: string, timeoutMs = 15000): Promise<Response | null> {
   try {
     const controller = new AbortController();
@@ -99,6 +103,191 @@ async function fetchGet(url: string, timeoutMs = 20000): Promise<Response | null
   } catch {
     return null;
   }
+}
+
+function vtUrlId(url: string): string {
+  return Buffer.from(url).toString('base64').replace(/=/g, '');
+}
+
+async function lookupVirusTotalUrl(url: string): Promise<Record<string, unknown> | null> {
+  if (!SERVER_CONFIG.VIRUSTOTAL_API_KEY) return null;
+  const res = await fetch(`https://www.virustotal.com/api/v3/urls/${vtUrlId(url)}`, {
+    headers: { 'x-apikey': SERVER_CONFIG.VIRUSTOTAL_API_KEY, Accept: 'application/json' },
+    signal: AbortSignal.timeout(12000),
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+async function lookupAbuseIpDb(ip: string): Promise<Record<string, unknown> | null> {
+  if (!SERVER_CONFIG.ABUSEIPDB_API_KEY || !ip) return null;
+  const res = await fetch(`https://api.abuseipdb.com/api/v2/check?ipAddress=${encodeURIComponent(ip)}&maxAgeInDays=90&verbose=true`, {
+    headers: { Key: SERVER_CONFIG.ABUSEIPDB_API_KEY, Accept: 'application/json' },
+    signal: AbortSignal.timeout(12000),
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+async function lookupIpInfo(ip: string): Promise<Record<string, unknown> | null> {
+  if (!SERVER_CONFIG.IPINFO_TOKEN || !ip) return null;
+  const res = await fetch(`https://ipinfo.io/${encodeURIComponent(ip)}/json?token=${encodeURIComponent(SERVER_CONFIG.IPINFO_TOKEN)}`, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(12000),
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+async function searchSerpApi(query: string, extraParams: Record<string, string> = {}): Promise<Record<string, unknown> | null> {
+  if (!SERVER_CONFIG.SERPAPI_API_KEY) return null;
+  const params = new URLSearchParams({
+    engine: 'google',
+    api_key: SERVER_CONFIG.SERPAPI_API_KEY,
+    q: query,
+    num: '10',
+    ...extraParams,
+  });
+  const res = await fetch(`https://serpapi.com/search.json?${params.toString()}`, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(15000),
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+function getPageSpeedApiKey(): string {
+  const filePath = SERVER_CONFIG.PAGESPEED_KEY_FILE?.trim();
+  if (!filePath) return '';
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8').trim();
+    if (!raw) return '';
+    if (raw.startsWith('{')) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      return String(parsed.apiKey || parsed.key || parsed.api_key || '').trim();
+    }
+    return raw;
+  } catch {
+    return '';
+  }
+}
+
+async function runPageSpeed(url: string): Promise<Record<string, unknown> | null> {
+  const apiKey = getPageSpeedApiKey();
+  if (!apiKey) return null;
+  const params = new URLSearchParams({
+    url,
+    key: apiKey,
+    strategy: 'mobile',
+    category: 'performance',
+  });
+  const res = await fetch(`https://pagespeedonline.googleapis.com/pagespeedonline/v5/runPagespeed?${params.toString()}`, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(30000),
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+function gtmetrixAuthHeader(): string {
+  const user = SERVER_CONFIG.GTMETRIX_USERNAME || SERVER_CONFIG.GTMETRIX_API_KEY;
+  const pass = SERVER_CONFIG.GTMETRIX_USERNAME ? SERVER_CONFIG.GTMETRIX_API_KEY : '';
+  return `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`;
+}
+
+async function runGtmetrixTest(url: string): Promise<Record<string, unknown> | null> {
+  if (!SERVER_CONFIG.GTMETRIX_API_KEY || SERVER_CONFIG.DISABLE_GTMETRIX === '1') return null;
+  const payload = {
+    data: {
+      type: 'test',
+      attributes: {
+        url,
+        location: SERVER_CONFIG.GTMETRIX_LOCATION || undefined,
+      },
+    },
+  };
+  const start = await fetch('https://gtmetrix.com/api/2.0/tests', {
+    method: 'POST',
+    headers: {
+      Authorization: gtmetrixAuthHeader(),
+      'Content-Type': 'application/vnd.api+json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(20000),
+  }).catch(() => null);
+  if (!start?.ok) return null;
+  const started = await start.json() as { data?: { id?: string } };
+  const testId = started.data?.id;
+  if (!testId) return null;
+
+  for (let i = 0; i < 5; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    const statusRes = await fetch(`https://gtmetrix.com/api/2.0/tests/${testId}`, {
+      headers: {
+        Authorization: gtmetrixAuthHeader(),
+        Accept: 'application/json',
+      },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(15000),
+    }).catch(() => null);
+    if (!statusRes) return null;
+    if (statusRes.status === 303) {
+      const reportUrl = statusRes.headers.get('location');
+      if (!reportUrl) return null;
+      const fullUrl = reportUrl.startsWith('http') ? reportUrl : `https://gtmetrix.com${reportUrl}`;
+      const reportRes = await fetch(fullUrl, {
+        headers: {
+          Authorization: gtmetrixAuthHeader(),
+          Accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(15000),
+      }).catch(() => null);
+      if (!reportRes?.ok) return null;
+      return reportRes.json() as Promise<Record<string, unknown>>;
+    }
+  }
+  return null;
+}
+
+async function lookupDomainToolsProfile(domain: string): Promise<Record<string, unknown> | null> {
+  if (!SERVER_CONFIG.DOMAINTOOLS_API_KEY || !domain) return null;
+  const res = await fetch(`https://api.domaintools.com/v1/${encodeURIComponent(domain)}/`, {
+    headers: {
+      'X-Api-Key': SERVER_CONFIG.DOMAINTOOLS_API_KEY,
+      Accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(15000),
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+async function lookupCrunchbaseOrganization(domain: string): Promise<Record<string, unknown> | null> {
+  if (!SERVER_CONFIG.CRUNCHBASE_API_KEY || !domain) return null;
+  const params = new URLSearchParams({
+    domain_name: domain,
+    user_key: SERVER_CONFIG.CRUNCHBASE_API_KEY,
+  });
+  const res = await fetch(`https://api.crunchbase.com/v3.1/organizations?${params.toString()}`, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(15000),
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+async function lookupSpamhausDomain(domain: string): Promise<Record<string, unknown> | null> {
+  if (!SERVER_CONFIG.SPAMHAUS_API_KEY || !domain) return null;
+  const res = await fetch(`https://api.spamhaus.org/api/intel/v2/byobject/domain/${encodeURIComponent(domain)}`, {
+    headers: {
+      Authorization: `Bearer ${SERVER_CONFIG.SPAMHAUS_API_KEY}`,
+      Accept: 'application/json',
+    },
+    signal: AbortSignal.timeout(15000),
+  }).catch(() => null);
+  if (!res?.ok) return null;
+  return res.json() as Promise<Record<string, unknown>>;
 }
 
 async function resolveSrv(host: string): Promise<string | null> {
@@ -200,6 +389,8 @@ export async function checkDnsEmailRecords(url: string): Promise<CheckResult[]> 
 export async function checkRegistrarTransparency(url: string): Promise<CheckResult> {
   const domain = extractDomain(url);
   try {
+    const domainTools = await lookupDomainToolsProfile(domain);
+    const dtRegistrar = String((domainTools?.response as Record<string, unknown> | undefined)?.registrar || '');
     const res = await fetch(`https://rdap.org/domain/${domain}`, {
       signal: AbortSignal.timeout(10000),
     }).catch(() => null);
@@ -218,7 +409,14 @@ export async function checkRegistrarTransparency(url: string): Promise<CheckResu
       }
       if (registrar) break;
     }
-    return { id: 5, name: 'Registrar Details Transparency', status: registrar ? 'PASS' : 'WARN', evidence: `registrar=${registrar || 'unknown'}`, data: {} };
+    const finalRegistrar = registrar || dtRegistrar;
+    return {
+      id: 5,
+      name: 'Registrar Details Transparency',
+      status: finalRegistrar ? 'PASS' : 'WARN',
+      evidence: `registrar=${finalRegistrar || 'unknown'} source=${registrar ? 'rdap' : dtRegistrar ? 'domaintools' : 'none'}`,
+      data: { registrar: finalRegistrar, rdap_registrar: registrar, domaintools_registrar: dtRegistrar },
+    };
   } catch {
     return warn(5, 'Registrar Details Transparency', 'RDAP lookup failed');
   }
@@ -341,8 +539,20 @@ export async function checkIpReputation(url: string): Promise<CheckResult> {
     const { address: ip } = await dns.lookup(host).catch(() => ({ address: '' }));
     if (!ip) return warn(13, 'IP Reputation & Hosting', 'DNS resolution failed');
     const isPrivate = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|::1)/.test(ip);
-    const status = isPrivate ? 'WARN' : 'PASS';
-    return { id: 13, name: 'IP Reputation & Hosting', status, evidence: `ip=${ip} is_private=${isPrivate}`, data: { ip } };
+    const abuseData = await lookupAbuseIpDb(ip);
+    const abuse = abuseData?.data as Record<string, unknown> | undefined;
+    const abuseScore = Number(abuse?.abuseConfidenceScore || 0);
+    const reports = Number(abuse?.totalReports || 0);
+    let status: CheckResult['status'] = isPrivate ? 'WARN' : 'PASS';
+    if (abuseScore >= 75) status = 'FAIL';
+    else if (abuseScore >= 25 || reports > 0 || isPrivate) status = 'WARN';
+    return {
+      id: 13,
+      name: 'IP Reputation & Hosting',
+      status,
+      evidence: `ip=${ip} abuse_score=${abuseScore} total_reports=${reports} is_private=${isPrivate}`,
+      data: { ip, abuse_score: abuseScore, total_reports: reports, usage_type: abuse?.usageType || '' },
+    };
   } catch (e) {
     return warn(13, 'IP Reputation & Hosting', String(e).slice(0, 100));
   }
@@ -353,7 +563,20 @@ export async function checkServerGeolocation(url: string): Promise<CheckResult> 
     const host = extractHost(url);
     const tld = extractTld(url).toUpperCase();
     const { address: ip } = await dns.lookup(host).catch(() => ({ address: '' }));
-    return info(14, 'Geolocation of Server', `tld_hint=${tld} ip=${ip || 'unknown'} (exact geolocation unavailable without local geo DB)`, { tld_hint: tld, ip });
+    const ipInfo = ip ? await lookupIpInfo(ip) : null;
+    const country = String(ipInfo?.country || '');
+    const city = String(ipInfo?.city || '');
+    const region = String(ipInfo?.region || '');
+    const org = String(ipInfo?.org || '');
+    const location = [city, region, country].filter(Boolean).join(', ');
+    return info(14, 'Geolocation of Server', `tld_hint=${tld} ip=${ip || 'unknown'} location=${location || 'unknown'} org=${org || 'unknown'}`, {
+      tld_hint: tld,
+      ip,
+      city,
+      region,
+      country,
+      org,
+    });
   } catch (e) {
     return warn(14, 'Geolocation of Server', String(e).slice(0, 100));
   }
@@ -364,7 +587,10 @@ export async function checkHostingProvider(url: string): Promise<CheckResult> {
     const host = extractHost(url);
     const { address: ip } = await dns.lookup(host).catch(() => ({ address: '' }));
     if (!ip) return warn(15, 'Hosting Provider Legitimacy', 'could not resolve host');
-    return info(15, 'Hosting Provider Legitimacy', `ip=${ip} (provider classification unavailable without IP-ASN database)`, { ip });
+    const ipInfo = await lookupIpInfo(ip);
+    const org = String(ipInfo?.org || '');
+    const hostname = String(ipInfo?.hostname || '');
+    return info(15, 'Hosting Provider Legitimacy', `ip=${ip} provider=${org || 'unknown'} hostname=${hostname || 'unknown'}`, { ip, provider: org, hostname });
   } catch (e) {
     return warn(15, 'Hosting Provider Legitimacy', String(e).slice(0, 100));
   }
@@ -372,16 +598,36 @@ export async function checkHostingProvider(url: string): Promise<CheckResult> {
 
 export async function checkPageLoadSpeed(url: string): Promise<CheckResult> {
   try {
+    const gtmetrixEnabled = Boolean(SERVER_CONFIG.GTMETRIX_API_KEY) && SERVER_CONFIG.DISABLE_GTMETRIX !== '1';
     const start = Date.now();
     const res = await fetchGet(url, 30000);
     const totalMs = Date.now() - start;
     if (!res) return warn(16, 'Page Load Speed', 'request failed or timed out');
     const body = await res.text().catch(() => '');
     const sizeKb = Buffer.byteLength(body, 'utf8') / 1024;
+    const pageSpeed = await runPageSpeed(url);
+    const gtmetrix = gtmetrixEnabled ? await runGtmetrixTest(url) : null;
+    const pageSpeedScore = Number((((pageSpeed?.lighthouseResult as Record<string, unknown> | undefined)?.categories as Record<string, unknown> | undefined)?.performance as Record<string, unknown> | undefined)?.score || 0);
+    const gtmetrixAttrs = (gtmetrix?.data as Record<string, unknown> | undefined)?.attributes as Record<string, unknown> | undefined;
+    const gtmetrixScore = Number(gtmetrixAttrs?.performance_score || 0);
     let status: CheckResult['status'] = 'INFO';
-    if (totalMs < 2500 && sizeKb < 1500) status = 'PASS';
-    else if (totalMs > 4500 || sizeKb > 3000) status = 'WARN';
-    return { id: 16, name: 'Page Load Speed', status, evidence: `status_code=${res.status} total_ms=${totalMs} size_kb=${sizeKb.toFixed(1)}`, data: { total_ms: totalMs, size_kb: sizeKb } };
+    if ((pageSpeedScore && pageSpeedScore >= 0.85) || (gtmetrixScore && gtmetrixScore >= 85) || (totalMs < 2500 && sizeKb < 1500)) status = 'PASS';
+    else if ((pageSpeedScore && pageSpeedScore < 0.5) || (gtmetrixScore && gtmetrixScore < 50) || totalMs > 4500 || sizeKb > 3000) status = 'WARN';
+    return {
+      id: 16,
+      name: 'Page Load Speed',
+      status,
+      evidence: `status_code=${res.status} total_ms=${totalMs} size_kb=${sizeKb.toFixed(1)} pagespeed_score=${pageSpeedScore || 'n/a'} gtmetrix_score=${gtmetrixScore || 'n/a'}`,
+      data: {
+        total_ms: totalMs,
+        size_kb: sizeKb,
+        gtmetrix_enabled: gtmetrixEnabled,
+        gtmetrix_location: SERVER_CONFIG.GTMETRIX_LOCATION,
+        gtmetrix_location_secondary: SERVER_CONFIG.GTMETRIX_LOCATION_SECONDARY,
+        pagespeed_score: pageSpeedScore || null,
+        gtmetrix_score: gtmetrixScore || null,
+      },
+    };
   } catch (e) {
     return warn(16, 'Page Load Speed', `speed check error: ${String(e).slice(0, 100)}`);
   }
@@ -493,10 +739,14 @@ export async function checkBrokenLinks(url: string): Promise<CheckResult> {
 // ─── Reputation checks ────────────────────────────────────────────────────────
 
 export async function checkSecurityBlacklists(url: string): Promise<CheckResult> {
-  // Check Google Safe Browsing API if configured, otherwise skip
-  const apiKey = process.env.GOOGLE_SAFE_BROWSING_API_KEY;
-  if (!apiKey) return info(26, 'Security Blacklists', 'blacklist_check=skipped (GOOGLE_SAFE_BROWSING_API_KEY not configured)');
+  if (!SERVER_CONFIG.GOOGLE_SAFE_BROWSING_API_KEY && !SERVER_CONFIG.VIRUSTOTAL_API_KEY) {
+    return info(26, 'Security Blacklists', 'blacklist_check=skipped (no blacklist APIs configured)');
+  }
   try {
+    const vtData = await lookupVirusTotalUrl(url);
+    const vtStats = (((vtData?.data as Record<string, unknown> | undefined)?.attributes as Record<string, unknown> | undefined)?.last_analysis_stats || {}) as Record<string, unknown>;
+    const malicious = Number(vtStats.malicious || 0);
+    const suspicious = Number(vtStats.suspicious || 0);
     const body = {
       client: { clientId: 'url-audit-kit', clientVersion: '2.0' },
       threatInfo: {
@@ -506,25 +756,34 @@ export async function checkSecurityBlacklists(url: string): Promise<CheckResult>
         threatEntries: [{ url }],
       },
     };
-    const res = await fetch(`https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(10000),
-    });
-    const data = await res.json() as { matches?: unknown[] };
-    if (data.matches && data.matches.length > 0) {
-      return fail(26, 'Security Blacklists', `blacklist_matches=${JSON.stringify(data.matches).slice(0, 200)}`, { matches: data.matches });
+    let googleMatches: unknown[] = [];
+    if (SERVER_CONFIG.GOOGLE_SAFE_BROWSING_API_KEY) {
+      const res = await fetch(`https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${SERVER_CONFIG.GOOGLE_SAFE_BROWSING_API_KEY}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10000),
+      });
+      const data = await res.json() as { matches?: unknown[] };
+      googleMatches = data.matches || [];
     }
-    return ok(26, 'Security Blacklists', 'no_blacklist_matches=true');
+    if (googleMatches.length > 0 || malicious > 0) {
+      return fail(26, 'Security Blacklists', `google_matches=${googleMatches.length} vt_malicious=${malicious} vt_suspicious=${suspicious}`, {
+        google_matches: googleMatches,
+        vt_stats: vtStats,
+      });
+    }
+    if (suspicious > 0) {
+      return warn(26, 'Security Blacklists', `google_matches=0 vt_malicious=${malicious} vt_suspicious=${suspicious}`, { vt_stats: vtStats });
+    }
+    return ok(26, 'Security Blacklists', `google_matches=${googleMatches.length} vt_malicious=${malicious} vt_suspicious=${suspicious}`);
   } catch (e) {
     return warn(26, 'Security Blacklists', `blacklist check error: ${String(e).slice(0, 100)}`);
   }
 }
 
 export async function checkGoogleSafeBrowsing(url: string): Promise<CheckResult> {
-  const apiKey = process.env.GOOGLE_SAFE_BROWSING_API_KEY;
-  if (!apiKey) return info(27, 'Google Safe Browsing', 'safe_browsing_check=skipped (GOOGLE_SAFE_BROWSING_API_KEY not configured)');
+  if (!SERVER_CONFIG.GOOGLE_SAFE_BROWSING_API_KEY) return info(27, 'Google Safe Browsing', 'safe_browsing_check=skipped (GOOGLE_SAFE_BROWSING_API_KEY not configured)');
   try {
     const body = {
       client: { clientId: 'url-audit-kit', clientVersion: '2.0' },
@@ -535,7 +794,7 @@ export async function checkGoogleSafeBrowsing(url: string): Promise<CheckResult>
         threatEntries: [{ url }],
       },
     };
-    const res = await fetch(`https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${apiKey}`, {
+    const res = await fetch(`https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${SERVER_CONFIG.GOOGLE_SAFE_BROWSING_API_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -550,7 +809,16 @@ export async function checkGoogleSafeBrowsing(url: string): Promise<CheckResult>
 }
 
 export async function checkSearchVisibility(url: string): Promise<CheckResult> {
-  return info(28, 'Search Visibility', 'search_visibility=skipped (no search API configured)');
+  try {
+    const domain = extractDomain(url);
+    const data = await searchSerpApi(`site:${domain}`);
+    if (!data) return info(28, 'Search Visibility', 'search_visibility=skipped (SERPAPI unavailable)');
+    const organic = Array.isArray(data.organic_results) ? data.organic_results.length : 0;
+    const status: CheckResult['status'] = organic > 0 ? 'PASS' : 'WARN';
+    return { id: 28, name: 'Search Visibility', status, evidence: `domain=${domain} indexed_results=${organic}`, data: { indexed_results: organic } };
+  } catch (e) {
+    return warn(28, 'Search Visibility', String(e).slice(0, 100));
+  }
 }
 
 export async function checkSocialMentions(url: string): Promise<CheckResult> {
@@ -576,11 +844,36 @@ export async function checkWayback(url: string): Promise<CheckResult> {
 }
 
 export async function checkNewsReviews(url: string): Promise<CheckResult> {
-  return info(31, 'News & Reviews', 'news_check=skipped (no news API configured)');
+  try {
+    const domain = extractDomain(url);
+    const data = await searchSerpApi(`"${domain}" reviews OR scam OR phishing`, { tbm: 'nws' });
+    if (!data) return info(31, 'News & Reviews', 'news_check=skipped (SERPAPI unavailable)');
+    const stories = Array.isArray(data.news_results) ? data.news_results.length : 0;
+    const status: CheckResult['status'] = stories > 0 ? 'INFO' : 'PASS';
+    return { id: 31, name: 'News & Reviews', status, evidence: `domain=${domain} news_hits=${stories}`, data: { news_hits: stories } };
+  } catch (e) {
+    return warn(31, 'News & Reviews', String(e).slice(0, 100));
+  }
 }
 
 export async function checkBlacklistsEmailFilters(url: string): Promise<CheckResult> {
-  return info(32, 'Blacklists & Email Filters', 'email_blacklist_check=skipped (no DNSBL API configured)');
+  try {
+    const domain = extractDomain(url);
+    const spamhausConfigured = Boolean(SERVER_CONFIG.SPAMHAUS_API_KEY);
+    const surblConfigured = Boolean(SERVER_CONFIG.SURBL_API_KEY);
+    const spamhausData = spamhausConfigured ? await lookupSpamhausDomain(domain) : null;
+    const listed = Array.isArray(spamhausData?.records) ? spamhausData.records.length : 0;
+    const status: CheckResult['status'] = listed > 0 ? 'FAIL' : (spamhausConfigured || surblConfigured ? 'INFO' : 'SKIP');
+    return {
+      id: 32,
+      name: 'Blacklists & Email Filters',
+      status,
+      evidence: `domain=${domain} spamhaus_configured=${spamhausConfigured} surbl_configured=${surblConfigured} spamhaus_hits=${listed}`,
+      data: { domain, spamhaus_configured: spamhausConfigured, surbl_configured: surblConfigured, spamhaus_hits: listed, spamhaus: spamhausData },
+    };
+  } catch (e) {
+    return warn(32, 'Blacklists & Email Filters', String(e).slice(0, 100));
+  }
 }
 
 export async function checkUserCommunityFeedback(url: string): Promise<CheckResult> {
@@ -588,7 +881,32 @@ export async function checkUserCommunityFeedback(url: string): Promise<CheckResu
 }
 
 export async function checkBusinessDirectories(url: string): Promise<CheckResult> {
-  return info(34, 'Business Directories', 'directory_check=skipped (no directory API configured)');
+  try {
+    const domain = extractDomain(url);
+    const crunchbase = await lookupCrunchbaseOrganization(domain);
+    const domaintools = await lookupDomainToolsProfile(domain);
+    const cbEntities = Array.isArray((crunchbase?.data as Record<string, unknown> | undefined)?.items)
+      ? ((crunchbase?.data as Record<string, unknown> | undefined)?.items as unknown[])
+      : [];
+    const cbHits = cbEntities.length;
+    const dtRisk = String((domaintools?.response as Record<string, unknown> | undefined)?.risk_score || '');
+    const status: CheckResult['status'] = cbHits > 0 ? 'PASS' : (dtRisk ? 'INFO' : 'WARN');
+    return {
+      id: 34,
+      name: 'Business Directories',
+      status,
+      evidence: `domain=${domain} crunchbase_hits=${cbHits} domaintools_risk=${dtRisk || 'n/a'}`,
+      data: {
+        domain,
+        crunchbase_hits: cbHits,
+        domaintools_risk: dtRisk || null,
+        crunchbase_configured: Boolean(SERVER_CONFIG.CRUNCHBASE_API_KEY),
+        domaintools_configured: Boolean(SERVER_CONFIG.DOMAINTOOLS_API_KEY),
+      },
+    };
+  } catch (e) {
+    return warn(34, 'Business Directories', String(e).slice(0, 100));
+  }
 }
 
 // ─── Behavior checks ──────────────────────────────────────────────────────────

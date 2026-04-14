@@ -3,6 +3,7 @@ import { runAll } from '@/lib/audit/runner';
 import { computeRisk } from '@/lib/audit/risk';
 import { persistScan } from '@/lib/audit/persistence';
 import { analyzeResultsWithNim } from '@/lib/audit/ai';
+import { getProviderStatuses } from '@/lib/server-config';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -33,6 +34,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   try {
     const { results, grouped_results, counts } = await runAll(url);
+    const providerStatuses = getProviderStatuses();
     const analysis = await analyzeResultsWithNim(results);
     const threatReport = analysis.enabled ? analysis.threat_report || null : null;
     const metadata = analysis.enabled ? analysis.metadata || null : null;
@@ -70,6 +72,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       ai_threat_report: threatReport,
       ai_metadata: metadata,
       ai_error: analysisError,
+      provider_statuses: providerStatuses,
       scan_id,
       scan_mode: scanMode,
       risk_score: riskMeta.risk_score,

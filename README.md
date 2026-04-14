@@ -29,13 +29,24 @@ Open:
 
 ## Environment
 
-Copy `.env.example` to `.env` if needed and configure:
+For local development, copy `frontend/.env.local.example` to `frontend/.env.local`.
+For Render, add the same keys to the service environment settings.
+
+Active environment variables used by the current Node app:
 
 - `URL_AUDIT_DB_PATH=...`
+- `GOOGLE_SAFE_BROWSING_API_KEY=...` for blacklist and Safe Browsing checks
 - `AI_PROVIDER=nim`
 - `NVIDIA_NIM_API_KEY=...`
 - `NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1`
 - `NVIDIA_NIM_MODEL=meta/llama-3.1-70b-instruct`
+- `NVIDIA_NIM_TIMEOUT=90`
+
+Legacy aliases still supported:
+
+- `AI_PROVIDER=nvidia` maps to the NVIDIA NIM provider
+- `NVIDIA_TEXT_MODEL` maps to `NVIDIA_NIM_MODEL`
+- `NVIDIA_TIMEOUT` maps to `NVIDIA_NIM_TIMEOUT`
 
 ## API
 

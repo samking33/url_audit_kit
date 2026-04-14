@@ -138,7 +138,7 @@ Build a production-ready URL auditing application that provides comprehensive, e
 
 ## 4. AI Tooling
 - NVIDIA NIM Chat Completions API
-- Model configured via `NVIDIA_TEXT_MODEL`
+- Model configured via `NVIDIA_NIM_MODEL` with `NVIDIA_TEXT_MODEL` kept as a legacy alias
 - Timeout and base URL configurable from environment
 
 ## 5. Quality and Validation Tooling
@@ -147,7 +147,7 @@ Build a production-ready URL auditing application that provides comprehensive, e
 ## 6. DevOps and Execution
 - Stateless process model, no DB migration lifecycle
 - Single-service Node.js run model
-  - Backend on port `8765`
+  - Next.js app served by the configured Node.js host/port
   - Frontend on port `3000`
 
 ---

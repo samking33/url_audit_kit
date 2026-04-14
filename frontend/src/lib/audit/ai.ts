@@ -38,13 +38,19 @@ interface ContentAnalysis {
   summary?: string;
 }
 
+import { getServerConfig } from '../server-config';
+
 function getAiConfig() {
+  const serverConfig = getServerConfig();
+  const provider = (serverConfig.AI_PROVIDER || 'nim').toLowerCase();
+  const normalizedProvider = provider === 'nvidia' ? 'nim' : provider;
+
   return {
-    provider: (process.env.AI_PROVIDER || 'nim').toLowerCase(),
-    apiKey: process.env.NVIDIA_NIM_API_KEY || '',
-    baseUrl: (process.env.NVIDIA_NIM_BASE_URL || 'https://integrate.api.nvidia.com/v1').replace(/\/$/, ''),
-    model: process.env.NVIDIA_NIM_MODEL || 'meta/llama-3.1-70b-instruct',
-    timeoutMs: Number(process.env.NVIDIA_NIM_TIMEOUT || 90) * 1000,
+    provider: normalizedProvider,
+    apiKey: serverConfig.NVIDIA_NIM_API_KEY || '',
+    baseUrl: (serverConfig.NVIDIA_NIM_BASE_URL || 'https://integrate.api.nvidia.com/v1').replace(/\/$/, ''),
+    model: serverConfig.NVIDIA_NIM_MODEL || serverConfig.NVIDIA_TEXT_MODEL || 'meta/llama-3.1-70b-instruct',
+    timeoutMs: Number(serverConfig.NVIDIA_NIM_TIMEOUT || serverConfig.NVIDIA_TIMEOUT || 90) * 1000,
   };
 }
 

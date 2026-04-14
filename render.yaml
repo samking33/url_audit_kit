@@ -14,6 +14,8 @@ services:
         value: 20
       - key: URL_AUDIT_DB_PATH
         value: /tmp/url_audit.db
+      - key: GOOGLE_SAFE_BROWSING_API_KEY
+        sync: false
       - key: AI_PROVIDER
         value: nim
       - key: NVIDIA_NIM_API_KEY
@@ -22,3 +24,5 @@ services:
         value: https://integrate.api.nvidia.com/v1
       - key: NVIDIA_NIM_MODEL
         value: meta/llama-3.1-70b-instruct
+      - key: NVIDIA_NIM_TIMEOUT
+        value: 90

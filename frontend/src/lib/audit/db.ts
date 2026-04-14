@@ -5,9 +5,10 @@
 import { Database } from 'node-sqlite3-wasm';
 import * as path from 'path';
 import * as fs from 'fs';
+import { getServerConfig } from '../server-config';
 
 function dbPath(): string {
-  const env = process.env.URL_AUDIT_DB_PATH?.trim();
+  const env = getServerConfig().URL_AUDIT_DB_PATH?.trim();
   if (env) return env;
   // Default: <project-root>/data/url_audit.db
   // process.cwd() when running from root package.json wrapper is project root
