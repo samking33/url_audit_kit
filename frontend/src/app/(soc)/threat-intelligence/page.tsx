@@ -1,5 +1,6 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useState } from 'react';
 import DataTable from '@/components/ui/DataTable';
 import { getIOCs, getThreatDomains, getThreatIpReputation, getThreatMap } from '@/lib/api';
@@ -21,11 +22,9 @@ interface IpRow {
   last_seen: string;
 }
 
-function toMapPosition(point: ThreatMapPoint): { left: string; top: string } {
-  const left = ((point.lng + 180) / 360) * 100;
-  const top = ((90 - point.lat) / 180) * 100;
-  return { left: `${left}%`, top: `${top}%` };
-}
+const LeafletThreatMap = dynamic(() => import('@/components/threat/LeafletThreatMap'), {
+  ssr: false,
+});
 
 function slicePage<T>(rows: T[], page: number, pageSize: number): { items: T[]; totalPages: number } {
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
@@ -112,21 +111,7 @@ export default function ThreatIntelligencePage() {
 
       <section className="panel threat-map-panel">
         <h2>Global Threat Map</h2>
-        <div className="world-map">
-          <img src="/visuals/world-map.svg" alt="World map" />
-          {mapPoints.map((point) => {
-            const position = toMapPosition(point);
-            const size = Math.min(22, 6 + point.count * 1.5);
-            return (
-              <span
-                key={`${point.country}-${point.lat}-${point.lng}`}
-                className="map-marker"
-                style={{ ...position, width: size, height: size }}
-                title={`${point.country} · ${point.count} indicators`}
-              />
-            );
-          })}
-        </div>
+        <LeafletThreatMap points={mapPoints} />
       </section>
 
       <DataTable<DomainRow>

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import CssBaseline from '@mui/material/CssBaseline';
 import { ThemeProvider } from '@/contexts/ThemeContext';
+import 'leaflet/dist/leaflet.css';
 import './globals.css';
 
 export const metadata: Metadata = {
